@@ -55,6 +55,7 @@ struct axi_clkgen {
 	struct clk_hw clk_hw;
 	unsigned int pcore_version;
 	struct clk *parent_clocks[2];
+	struct clk *axi_clk;
 };
 
 static uint32_t axi_clkgen_lookup_filter(unsigned int m)
@@ -574,12 +575,6 @@ static int axi_clkgen_probe(struct platform_device *pdev)
 	if (IS_ERR(axi_clkgen->base))
 		return PTR_ERR(axi_clkgen->base);
 
-	axi_clkgen_read(axi_clkgen, ADI_AXI_REG_VERSION,
-			&axi_clkgen->pcore_version);
-
-	if (ADI_AXI_PCORE_VER_MAJOR(axi_clkgen->pcore_version) > 0x04)
-		axi_clkgen_setup_ranges(axi_clkgen);
-
 	for (i = 0, init.num_parents = 0; i < ARRAY_SIZE(axi_clkgen->parent_clocks); i++) {
 		sprintf(clkin_name, "clkin%d", i + 1);
 		axi_clkgen->parent_clocks[i] = devm_clk_get(&pdev->dev, clkin_name);
@@ -603,6 +598,23 @@ static int axi_clkgen_probe(struct platform_device *pdev)
 			goto err_disable_parent_clocks;
 	}
 
+	axi_clkgen->axi_clk = devm_clk_get(&pdev->dev, "s_axi_aclk");
+	if (IS_ERR(axi_clkgen->axi_clk)) {
+		dev_err(&pdev->dev, "failed to get s_axi_aclk\n");
+		ret = PTR_ERR(axi_clkgen->axi_clk);
+		goto err_disable_parent_clocks;
+	}
+
+	ret = clk_prepare_enable(axi_clkgen->axi_clk);
+	if (ret)
+		goto err_disable_parent_clocks;
+
+	axi_clkgen_read(axi_clkgen, ADI_AXI_REG_VERSION,
+			&axi_clkgen->pcore_version);
+
+	if (ADI_AXI_PCORE_VER_MAJOR(axi_clkgen->pcore_version) > 0x04)
+		axi_clkgen_setup_ranges(axi_clkgen);
+
 	clk_name = pdev->dev.of_node->name;
 	of_property_read_string(pdev->dev.of_node, "clock-output-names",
 		&clk_name);
@@ -617,12 +629,15 @@ static int axi_clkgen_probe(struct platform_device *pdev)
 	axi_clkgen->clk_hw.init = &init;
 	ret = devm_clk_hw_register(&pdev->dev, &axi_clkgen->clk_hw);
 	if (ret)
-		goto err_disable_parent_clocks;
+		goto err_disable_axi_clk;
 
 	platform_set_drvdata(pdev, axi_clkgen);
 
 	return of_clk_add_hw_provider(pdev->dev.of_node, of_clk_hw_simple_get,
 				      &axi_clkgen->clk_hw);
+
+err_disable_axi_clk:
+	clk_disable_unprepare(axi_clkgen->axi_clk);
 
 err_disable_parent_clocks:
 	for (i = 0; i < init.num_parents; i++)
@@ -637,6 +652,8 @@ static int axi_clkgen_remove(struct platform_device *pdev)
 	int i;
 
 	of_clk_del_provider(pdev->dev.of_node);
+
+	clk_disable_unprepare(axi_clkgen->axi_clk);
 
 	for (i = 0; i < ARRAY_SIZE(axi_clkgen->parent_clocks); i++)
 		clk_disable_unprepare(axi_clkgen->parent_clocks[i]);
