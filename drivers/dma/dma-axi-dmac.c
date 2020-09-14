@@ -146,7 +146,7 @@ struct axi_dmac {
 	void __iomem *base;
 	int irq;
 
-	struct clk *clk;
+	struct clk *data_clk;
 
 	struct dma_device dma_dev;
 	struct axi_dmac_chan chan;
@@ -991,11 +991,11 @@ static int axi_dmac_probe(struct platform_device *pdev)
 	if (IS_ERR(dmac->base))
 		return PTR_ERR(dmac->base);
 
-	dmac->clk = devm_clk_get(&pdev->dev, NULL);
-	if (IS_ERR(dmac->clk))
-		return PTR_ERR(dmac->clk);
+	dmac->data_clk = devm_clk_get(&pdev->dev, "data_clk");
+	if (IS_ERR(dmac->data_clk))
+		return PTR_ERR(dmac->data_clk);
 
-	ret = clk_prepare_enable(dmac->clk);
+	ret = clk_prepare_enable(dmac->data_clk);
 	if (ret < 0)
 		return ret;
 
@@ -1098,7 +1098,7 @@ err_unregister_of:
 err_unregister_device:
 	dma_async_device_unregister(&dmac->dma_dev);
 err_clk_disable:
-	clk_disable_unprepare(dmac->clk);
+	clk_disable_unprepare(dmac->data_clk);
 
 	return ret;
 }
@@ -1111,7 +1111,7 @@ static int axi_dmac_remove(struct platform_device *pdev)
 	free_irq(dmac->irq, dmac);
 	tasklet_kill(&dmac->chan.vchan.task);
 	dma_async_device_unregister(&dmac->dma_dev);
-	clk_disable_unprepare(dmac->clk);
+	clk_disable_unprepare(dmac->data_clk);
 
 	return 0;
 }
