@@ -147,6 +147,7 @@ struct axi_dmac {
 	int irq;
 
 	struct clk *data_clk;
+	struct clk *axi_clk;
 
 	struct dma_device dma_dev;
 	struct axi_dmac_chan chan;
@@ -991,13 +992,23 @@ static int axi_dmac_probe(struct platform_device *pdev)
 	if (IS_ERR(dmac->base))
 		return PTR_ERR(dmac->base);
 
+	dmac->axi_clk = devm_clk_get(&pdev->dev, "s_axi_aclk");
+	if (IS_ERR(dmac->axi_clk))
+		return PTR_ERR(dmac->axi_clk);
+
+	ret = clk_prepare_enable(dmac->axi_clk);
+	if (ret < 0)
+		return ret;
+
 	dmac->data_clk = devm_clk_get(&pdev->dev, "data_clk");
-	if (IS_ERR(dmac->data_clk))
-		return PTR_ERR(dmac->data_clk);
+	if (IS_ERR(dmac->data_clk)) {
+		ret = PTR_ERR(dmac->data_clk);
+		goto err_axi_clk_disable;
+	}
 
 	ret = clk_prepare_enable(dmac->data_clk);
 	if (ret < 0)
-		return ret;
+		goto err_axi_clk_disable;
 
 	INIT_LIST_HEAD(&dmac->chan.active_descs);
 
@@ -1009,7 +1020,7 @@ static int axi_dmac_probe(struct platform_device *pdev)
 		ret = axi_dmac_parse_dt(&pdev->dev, dmac);
 
 	if (ret < 0)
-		return ret;
+		goto err_clk_disable;
 
 	pdev->dev.dma_parms = &dmac->dma_parms;
 	dma_set_max_seg_size(&pdev->dev, UINT_MAX);
@@ -1099,6 +1110,8 @@ err_unregister_device:
 	dma_async_device_unregister(&dmac->dma_dev);
 err_clk_disable:
 	clk_disable_unprepare(dmac->data_clk);
+err_axi_clk_disable:
+	clk_disable_unprepare(dmac->axi_clk);
 
 	return ret;
 }
@@ -1112,6 +1125,7 @@ static int axi_dmac_remove(struct platform_device *pdev)
 	tasklet_kill(&dmac->chan.vchan.task);
 	dma_async_device_unregister(&dmac->dma_dev);
 	clk_disable_unprepare(dmac->data_clk);
+	clk_disable_unprepare(dmac->axi_clk);
 
 	return 0;
 }
